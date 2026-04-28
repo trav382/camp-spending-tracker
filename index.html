@@ -7,68 +7,71 @@
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
-    <header class="app-header">
+    <header class="topbar">
       <div>
-        <p class="eyebrow">Camp ledger</p>
-        <h1>Spending Tracker</h1>
+        <p class="eyebrow">Camp spending</p>
+        <h1>Camper Ledger</h1>
       </div>
-      <div class="header-actions">
-        <button id="exportCsvBtn" class="secondary-button" type="button">Export CSV</button>
-        <label class="secondary-button file-button">
+      <div class="topbar-actions">
+        <button id="exportCsvBtn" class="button secondary" type="button">Export CSV</button>
+        <label class="button secondary file-button">
           Import CSV
           <input id="importCsvInput" type="file" accept=".csv,text/csv">
         </label>
-        <button id="sampleBtn" class="ghost-button" type="button">Load Sample</button>
+        <button id="backupDbBtn" class="button secondary" type="button">Backup Data</button>
+        <button id="sampleBtn" class="button quiet" type="button">Load Sample</button>
       </div>
     </header>
 
     <main class="app-shell">
-      <section class="summary-band" aria-label="Camp spending summary">
-        <div>
+      <section class="summary-grid" aria-label="Camp spending summary">
+        <div class="metric">
           <span>Total campers</span>
           <strong id="totalCampers">0</strong>
         </div>
-        <div>
-          <span>Total deposits</span>
+        <div class="metric">
+          <span>Total credits</span>
           <strong id="totalDeposits">$0.00</strong>
         </div>
-        <div>
+        <div class="metric">
           <span>Total spent</span>
           <strong id="totalSpent">$0.00</strong>
         </div>
-        <div>
+        <div class="metric">
           <span>Remaining funds</span>
           <strong id="totalRemaining">$0.00</strong>
         </div>
       </section>
 
-      <section class="controls-band" aria-label="Controls">
-        <div class="search-wrap">
-          <label for="searchInput">Search campers</label>
-          <input id="searchInput" type="search" placeholder="Name, cabin, or group">
-        </div>
-        <div class="select-wrap">
-          <label for="statusFilter">Balance</label>
+      <section class="toolbar" aria-label="Controls">
+        <label class="field search-field" for="searchInput">
+          <span>Search campers</span>
+          <input id="searchInput" type="search" placeholder="Name, cabin, or guardian">
+        </label>
+        <label class="field filter-field" for="statusFilter">
+          <span>Balance</span>
           <select id="statusFilter">
             <option value="all">All balances</option>
             <option value="positive">Has funds</option>
             <option value="low">Low funds</option>
             <option value="zero">Zero or overdrawn</option>
           </select>
-        </div>
-        <button id="addCamperBtn" class="primary-button" type="button">Add Camper</button>
+        </label>
+        <button id="addCamperBtn" class="button primary" type="button">Add Camper</button>
       </section>
 
+      <p id="statusMessage" class="status-message" role="status" aria-live="polite"></p>
+
       <section class="workspace">
-        <aside class="camper-list-panel" aria-label="Campers">
-          <div class="panel-title-row">
+        <aside class="camper-pane" aria-label="Campers">
+          <div class="pane-heading">
             <h2>Campers</h2>
             <span id="visibleCount">0 shown</span>
           </div>
           <div id="camperList" class="camper-list"></div>
         </aside>
 
-        <section class="detail-panel" aria-label="Selected camper details">
+        <section class="detail-pane" aria-label="Selected camper details">
           <div id="emptyState" class="empty-state">
             <h2>No camper selected</h2>
             <p>Add a camper or choose one from the list to record deposits and purchases.</p>
@@ -80,33 +83,33 @@
                 <p id="detailMeta" class="eyebrow">Camper</p>
                 <h2 id="detailName">Camper Name</h2>
               </div>
-              <div class="balance-card">
-                <span>Current balance</span>
+              <div class="balance-block">
+                <span>Balance</span>
                 <strong id="detailBalance">$0.00</strong>
               </div>
             </div>
 
             <form id="camperForm" class="edit-grid">
-              <label>
-                Camper name
+              <label class="field">
+                <span>Camper name</span>
                 <input id="camperName" required>
               </label>
-              <label>
-                Cabin or group
+              <label class="field">
+                <span>Cabin or group</span>
                 <input id="camperCabin" placeholder="Cabin 4">
               </label>
-              <label>
-                Guardian contact
+              <label class="field">
+                <span>Guardian contact</span>
                 <input id="camperGuardian" placeholder="Name or phone">
               </label>
-              <button class="secondary-button" type="submit">Save Camper</button>
+              <button class="button secondary" type="submit">Save Camper</button>
             </form>
 
-            <div class="ledger-layout">
+            <div class="activity-grid">
               <form id="transactionForm" class="transaction-form">
                 <h3>Record Activity</h3>
-                <label>
-                  Type
+                <label class="field">
+                  <span>Type</span>
                   <select id="transactionType">
                     <option value="deposit">Deposit</option>
                     <option value="purchase">Purchase</option>
@@ -114,25 +117,25 @@
                     <option value="adjustment">Adjustment</option>
                   </select>
                 </label>
-                <label>
-                  Amount
+                <label class="field">
+                  <span>Amount</span>
                   <input id="transactionAmount" type="number" min="0.01" step="0.01" required>
                 </label>
-                <label>
-                  Date
+                <label class="field">
+                  <span>Date</span>
                   <input id="transactionDate" type="date" required>
                 </label>
-                <label>
-                  Note
-                  <input id="transactionNote" placeholder="Snack bar, camp store, allowance">
+                <label class="field">
+                  <span>Note</span>
+                  <input id="transactionNote" placeholder="Camp store, snacks, allowance">
                 </label>
-                <button class="primary-button" type="submit">Add Entry</button>
+                <button class="button primary" type="submit">Add Entry</button>
               </form>
 
-              <div class="ledger-panel">
-                <div class="panel-title-row">
+              <div class="ledger-pane">
+                <div class="pane-heading">
                   <h3>Ledger</h3>
-                  <button id="clearCamperBtn" class="danger-button" type="button">Remove Camper</button>
+                  <button id="clearCamperBtn" class="button danger" type="button">Remove Camper</button>
                 </div>
                 <div id="ledgerRows" class="ledger-rows"></div>
               </div>
@@ -159,7 +162,7 @@
           <small></small>
         </div>
         <span></span>
-        <button class="icon-button" type="button" aria-label="Delete entry">×</button>
+        <button class="delete-entry-button" type="button">Delete</button>
       </div>
     </template>
 
