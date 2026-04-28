@@ -1,4 +1,3 @@
-const STORAGE_KEY = "camp-spending-tracker-v1";
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
 const state = {
@@ -38,18 +37,20 @@ const els = {
   clearCamperBtn: document.querySelector("#clearCamperBtn"),
   exportCsvBtn: document.querySelector("#exportCsvBtn"),
   importCsvInput: document.querySelector("#importCsvInput"),
-  sampleBtn: document.querySelector("#sampleBtn")
+  backupDbBtn: document.querySelector("#backupDbBtn"),
+  sampleBtn: document.querySelector("#sampleBtn"),
+  statusMessage: document.querySelector("#statusMessage")
 };
+
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
 
 function uid(prefix) {
   const randomPart = globalThis.crypto?.randomUUID
     ? globalThis.crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   return `${prefix}-${randomPart}`;
-}
-
-function today() {
-  return new Date().toISOString().slice(0, 10);
 }
 
 function signedAmount(transaction) {
@@ -67,41 +68,41 @@ function balanceClass(balance) {
   return "balance-good";
 }
 
-function save() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.campers));
-}
+async function api(path, options = {}) {
+  const headers = options.body ? { "Content-Type": "application/json", ...options.headers } : options.headers;
+  const response = await fetch(path, { ...options, headers });
+  const payload = await response.json().catch(() => ({}));
 
-function load() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return;
-
-  try {
-    const campers = JSON.parse(raw);
-    if (Array.isArray(campers)) {
-      state.campers = campers.map(normalizeCamper);
-      state.selectedCamperId = state.campers[0]?.id ?? null;
-    }
-  } catch {
-    localStorage.removeItem(STORAGE_KEY);
+  if (!response.ok) {
+    throw new Error(payload.error || `Request failed with status ${response.status}.`);
   }
+
+  return payload;
 }
 
-function normalizeCamper(camper) {
-  return {
-    id: camper.id || uid("camper"),
-    name: camper.name || "Unnamed Camper",
-    cabin: camper.cabin || "",
-    guardian: camper.guardian || "",
-    transactions: Array.isArray(camper.transactions)
-      ? camper.transactions.map((transaction) => ({
-          id: transaction.id || uid("transaction"),
-          type: transaction.type || "purchase",
-          amount: Number(transaction.amount) || 0,
-          date: transaction.date || today(),
-          note: transaction.note || ""
-        }))
-      : []
-  };
+async function loadCampers({ preserveSelection = true } = {}) {
+  const previousSelection = state.selectedCamperId;
+  const payload = await api("/api/campers");
+  state.campers = payload.campers || [];
+
+  const stillSelected = state.campers.some((camper) => camper.id === previousSelection);
+  state.selectedCamperId = preserveSelection && stillSelected
+    ? previousSelection
+    : state.campers[0]?.id ?? null;
+
+  render();
+}
+
+function setCampers(campers, selectedCamperId = state.selectedCamperId) {
+  state.campers = campers || [];
+  const stillSelected = state.campers.some((camper) => camper.id === selectedCamperId);
+  state.selectedCamperId = stillSelected ? selectedCamperId : state.campers[0]?.id ?? null;
+  render();
+}
+
+function setStatus(message, tone = "") {
+  els.statusMessage.textContent = message;
+  els.statusMessage.dataset.tone = tone;
 }
 
 function selectedCamper() {
@@ -160,7 +161,6 @@ function renderCampers() {
     const empty = document.createElement("p");
     empty.className = "empty-list-note";
     empty.textContent = "No campers match the current filters.";
-    empty.style.padding = "16px";
     els.camperList.append(empty);
     return;
   }
@@ -198,11 +198,15 @@ function renderDetail() {
   els.camperGuardian.value = camper.guardian;
   els.ledgerRows.replaceChildren();
 
-  const transactions = [...camper.transactions].sort((a, b) => b.date.localeCompare(a.date));
+  const transactions = [...camper.transactions].sort((a, b) => {
+    const byDate = b.date.localeCompare(a.date);
+    return byDate || String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
+  });
+
   if (!transactions.length) {
     const empty = document.createElement("p");
+    empty.className = "empty-list-note";
     empty.textContent = "No ledger entries yet.";
-    empty.style.padding = "14px";
     els.ledgerRows.append(empty);
     return;
   }
@@ -231,41 +235,49 @@ function labelForType(type) {
   }[type] || "Entry";
 }
 
-function addCamper() {
-  const camper = normalizeCamper({
-    name: `Camper ${state.campers.length + 1}`,
-    cabin: "",
-    guardian: "",
-    transactions: []
-  });
-  state.campers.push(camper);
-  state.selectedCamperId = camper.id;
-  save();
-  render();
-  els.camperName.focus();
-  els.camperName.select();
+async function addCamper() {
+  try {
+    const payload = await api("/api/campers", {
+      method: "POST",
+      body: JSON.stringify({
+        name: `Camper ${state.campers.length + 1}`,
+        cabin: "",
+        guardian: ""
+      })
+    });
+    setCampers(payload.campers, payload.camper.id);
+    setStatus("Camper added.", "success");
+    els.camperName.focus();
+    els.camperName.select();
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
 }
 
-function removeSelectedCamper() {
+async function removeSelectedCamper() {
   const camper = selectedCamper();
   if (!camper) return;
 
   const confirmed = confirm(`Remove ${camper.name} and all ledger entries?`);
   if (!confirmed) return;
 
-  state.campers = state.campers.filter((item) => item.id !== camper.id);
-  state.selectedCamperId = state.campers[0]?.id ?? null;
-  save();
-  render();
+  try {
+    const payload = await api(`/api/campers/${encodeURIComponent(camper.id)}`, { method: "DELETE" });
+    setCampers(payload.campers);
+    setStatus("Camper removed.", "success");
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
 }
 
-function deleteTransaction(transactionId) {
-  const camper = selectedCamper();
-  if (!camper) return;
-
-  camper.transactions = camper.transactions.filter((transaction) => transaction.id !== transactionId);
-  save();
-  render();
+async function deleteTransaction(transactionId) {
+  try {
+    const payload = await api(`/api/transactions/${encodeURIComponent(transactionId)}`, { method: "DELETE" });
+    setCampers(payload.campers);
+    setStatus("Entry deleted.", "success");
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
 }
 
 function exportCsv() {
@@ -298,48 +310,61 @@ function csvCell(value) {
 function importCsv(file) {
   if (!file) return;
   const reader = new FileReader();
-  reader.addEventListener("load", () => {
-    const rows = parseCsv(String(reader.result || ""));
-    const [header, ...body] = rows;
-    if (!header) return;
-
-    const indexes = Object.fromEntries(header.map((name, index) => [name.trim().toLowerCase(), index]));
-    const byName = new Map();
-
-    body.forEach((row) => {
-      const name = row[indexes.camper_name]?.trim() || row[indexes.name]?.trim();
-      if (!name) return;
-
-      const key = `${name.toLowerCase()}|${row[indexes.cabin] || ""}`;
-      if (!byName.has(key)) {
-        byName.set(key, normalizeCamper({
-          name,
-          cabin: row[indexes.cabin] || "",
-          guardian: row[indexes.guardian] || "",
-          transactions: []
-        }));
-      }
-
-      const type = row[indexes.transaction_type] || row[indexes.type];
-      const amount = Number(row[indexes.amount]);
-      if (type && amount > 0) {
-        byName.get(key).transactions.push({
-          id: uid("transaction"),
-          type: type.toLowerCase(),
-          amount,
-          date: row[indexes.transaction_date] || row[indexes.date] || today(),
-          note: row[indexes.note] || ""
-        });
-      }
-    });
-
-    state.campers = Array.from(byName.values());
-    state.selectedCamperId = state.campers[0]?.id ?? null;
-    save();
-    render();
-    els.importCsvInput.value = "";
+  reader.addEventListener("load", async () => {
+    try {
+      const campers = campersFromCsv(String(reader.result || ""));
+      const payload = await api("/api/import", {
+        method: "POST",
+        body: JSON.stringify({ campers })
+      });
+      setCampers(payload.campers);
+      setStatus("CSV imported into SQLite.", "success");
+      els.importCsvInput.value = "";
+    } catch (error) {
+      setStatus(error.message, "error");
+    }
   });
   reader.readAsText(file);
+}
+
+function campersFromCsv(text) {
+  const rows = parseCsv(text);
+  const [header, ...body] = rows;
+  if (!header) return [];
+
+  const indexes = Object.fromEntries(header.map((name, index) => [name.trim().toLowerCase(), index]));
+  const byName = new Map();
+
+  body.forEach((row) => {
+    const name = row[indexes.camper_name]?.trim() || row[indexes.name]?.trim();
+    if (!name) return;
+
+    const cabin = row[indexes.cabin] || "";
+    const key = `${name.toLowerCase()}|${cabin.toLowerCase()}`;
+    if (!byName.has(key)) {
+      byName.set(key, {
+        id: uid("camper"),
+        name,
+        cabin,
+        guardian: row[indexes.guardian] || "",
+        transactions: []
+      });
+    }
+
+    const type = (row[indexes.transaction_type] || row[indexes.type] || "").toLowerCase();
+    const amount = Number(row[indexes.amount]);
+    if (type && amount > 0) {
+      byName.get(key).transactions.push({
+        id: uid("transaction"),
+        type,
+        amount,
+        date: row[indexes.transaction_date] || row[indexes.date] || today(),
+        note: row[indexes.note] || ""
+      });
+    }
+  });
+
+  return Array.from(byName.values());
 }
 
 function parseCsv(text) {
@@ -379,44 +404,65 @@ function parseCsv(text) {
   return rows.filter((items) => items.some((item) => item.trim()));
 }
 
-function loadSample() {
-  state.campers = [
-    normalizeCamper({
+async function backupDatabase() {
+  try {
+    const payload = await api("/api/backups", { method: "POST" });
+    setStatus(`Backup created: ${payload.file}`, "success");
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
+}
+
+async function loadSample() {
+  const campers = [
+    {
+      id: uid("camper"),
       name: "Avery Chen",
       cabin: "Cabin 2",
       guardian: "M. Chen",
       transactions: [
-        { type: "deposit", amount: 60, date: today(), note: "Opening balance" },
-        { type: "purchase", amount: 8.75, date: today(), note: "Camp store" }
+        { id: uid("transaction"), type: "deposit", amount: 60, date: today(), note: "Opening balance" },
+        { id: uid("transaction"), type: "purchase", amount: 8.75, date: today(), note: "Camp store" }
       ]
-    }),
-    normalizeCamper({
+    },
+    {
+      id: uid("camper"),
       name: "Jordan Brooks",
       cabin: "Cabin 5",
       guardian: "R. Brooks",
       transactions: [
-        { type: "deposit", amount: 40, date: today(), note: "Opening balance" },
-        { type: "purchase", amount: 34.5, date: today(), note: "Snacks and shirt" }
+        { id: uid("transaction"), type: "deposit", amount: 40, date: today(), note: "Opening balance" },
+        { id: uid("transaction"), type: "purchase", amount: 34.5, date: today(), note: "Snacks and shirt" }
       ]
-    }),
-    normalizeCamper({
+    },
+    {
+      id: uid("camper"),
       name: "Sam Rivera",
       cabin: "Cabin 1",
       guardian: "L. Rivera",
       transactions: [
-        { type: "deposit", amount: 25, date: today(), note: "Opening balance" }
+        { id: uid("transaction"), type: "deposit", amount: 25, date: today(), note: "Opening balance" }
       ]
-    })
+    }
   ];
-  state.selectedCamperId = state.campers[0].id;
-  save();
-  render();
+
+  try {
+    const payload = await api("/api/import", {
+      method: "POST",
+      body: JSON.stringify({ campers })
+    });
+    setCampers(payload.campers, payload.campers[0]?.id);
+    setStatus("Sample data loaded into SQLite.", "success");
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
 }
 
 els.addCamperBtn.addEventListener("click", addCamper);
 els.clearCamperBtn.addEventListener("click", removeSelectedCamper);
 els.exportCsvBtn.addEventListener("click", exportCsv);
 els.importCsvInput.addEventListener("change", (event) => importCsv(event.target.files[0]));
+els.backupDbBtn.addEventListener("click", backupDatabase);
 els.sampleBtn.addEventListener("click", loadSample);
 
 els.searchInput.addEventListener("input", (event) => {
@@ -429,37 +475,55 @@ els.statusFilter.addEventListener("change", (event) => {
   renderCampers();
 });
 
-els.camperForm.addEventListener("submit", (event) => {
+els.camperForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const camper = selectedCamper();
   if (!camper) return;
-  camper.name = els.camperName.value.trim() || "Unnamed Camper";
-  camper.cabin = els.camperCabin.value.trim();
-  camper.guardian = els.camperGuardian.value.trim();
-  save();
-  render();
+
+  try {
+    const payload = await api(`/api/campers/${encodeURIComponent(camper.id)}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        name: els.camperName.value.trim(),
+        cabin: els.camperCabin.value.trim(),
+        guardian: els.camperGuardian.value.trim()
+      })
+    });
+    setCampers(payload.campers, camper.id);
+    setStatus("Camper saved.", "success");
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
 });
 
-els.transactionForm.addEventListener("submit", (event) => {
+els.transactionForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const camper = selectedCamper();
   if (!camper) return;
 
-  camper.transactions.push({
-    id: uid("transaction"),
-    type: els.transactionType.value,
-    amount: Number(els.transactionAmount.value),
-    date: els.transactionDate.value || today(),
-    note: els.transactionNote.value.trim()
-  });
+  try {
+    const payload = await api(`/api/campers/${encodeURIComponent(camper.id)}/transactions`, {
+      method: "POST",
+      body: JSON.stringify({
+        type: els.transactionType.value,
+        amount: Number(els.transactionAmount.value),
+        date: els.transactionDate.value || today(),
+        note: els.transactionNote.value.trim()
+      })
+    });
 
-  els.transactionAmount.value = "";
-  els.transactionNote.value = "";
-  save();
-  render();
-  els.transactionAmount.focus();
+    els.transactionAmount.value = "";
+    els.transactionNote.value = "";
+    setCampers(payload.campers, camper.id);
+    setStatus("Entry added.", "success");
+    els.transactionAmount.focus();
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
 });
 
 els.transactionDate.value = today();
-load();
-render();
+setStatus("Loading local database...");
+loadCampers({ preserveSelection: false })
+  .then(() => setStatus("Ready.", "success"))
+  .catch((error) => setStatus(error.message, "error"));
